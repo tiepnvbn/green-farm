@@ -23,11 +23,11 @@ graph TB
         META[Metadata JSON]
     end
 
-    FA -->|harvestProduct| SC
+    FA -->|"harvestProduct()"| SC
     FA -->|upload files| Storage
-    LA -->|updateTransitStatus| SC
-    RA -->|receiveAndVerify| SC
-    CA -->|searchProducts / getProduct| SC
+    LA -->|"updateTransitStatus()"| SC
+    RA -->|"receiveAndVerify()"| SC
+    CA -->|"searchProducts()"| SC
     CA -->|view certificates| Storage
     SC --> TF
     SC --> PS

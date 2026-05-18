@@ -67,10 +67,10 @@ graph TB
         IPFS[IPFS Network]
     end
 
-    FA -->|harvestProduct()| SC
+    FA -->|"harvestProduct()"| SC
     FA -->|upload| IPFS
-    LA -->|updateTransitStatus()| SC
-    RA -->|receiveAndVerify()| SC
+    LA -->|"updateTransitStatus()"| SC
+    RA -->|"receiveAndVerify()"| SC
     CA -->|query| SC
     CA -->|view files| IPFS
     SC --> TF
