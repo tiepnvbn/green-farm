@@ -145,6 +145,17 @@ export function getAllProducts() {
   return Array.from(products.values());
 }
 
+// Search products by keyword (contains, case-insensitive)
+export function searchProducts(keyword) {
+  if (!keyword) return [];
+  const kw = keyword.trim().toLowerCase();
+  return Array.from(products.values()).filter((p) =>
+    p.id.toLowerCase().includes(kw) ||
+    p.productName.toLowerCase().includes(kw) ||
+    p.farmLocation.toLowerCase().includes(kw)
+  );
+}
+
 // Seed demo data
 export function seedDemoData() {
   if (products.size > 0) return;

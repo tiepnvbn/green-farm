@@ -1,22 +1,29 @@
 import { useState } from "react";
-import { getProduct } from "../store/blockchainStore";
+import { searchProducts } from "../store/blockchainStore";
 
 export default function Consumer() {
   const [productId, setProductId] = useState("");
   const [product, setProduct] = useState(null);
   const [error, setError] = useState("");
 
+  const [results, setResults] = useState([]);
+
   const handleSearch = (e) => {
     e.preventDefault();
     setError("");
     setProduct(null);
+    setResults([]);
 
-    const found = getProduct(productId.trim());
-    if (!found) {
+    const found = searchProducts(productId.trim());
+    if (found.length === 0) {
       setError("Không tìm thấy sản phẩm. Vui lòng kiểm tra lại mã ID.");
       return;
     }
-    setProduct(found);
+    if (found.length === 1) {
+      setProduct(found[0]);
+    } else {
+      setResults(found);
+    }
   };
 
   return (
@@ -40,6 +47,17 @@ export default function Consumer() {
       </form>
 
       {error && <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded text-sm">❌ {error}</div>}
+
+      {results.length > 1 && (
+        <div className="bg-white rounded-lg shadow p-4 space-y-2">
+          <p className="text-sm text-gray-600">Tìm thấy {results.length} kết quả. Chọn sản phẩm:</p>
+          {results.map((r) => (
+            <button key={r.id} onClick={() => { setProduct(r); setResults([]); }} className="w-full text-left border rounded p-3 hover:bg-green-50 transition text-sm">
+              <span className="font-medium">{r.id}</span> - {r.productName} ({r.farmLocation})
+            </button>
+          ))}
+        </div>
+      )}
 
       {product && (
         <div className="space-y-6">
