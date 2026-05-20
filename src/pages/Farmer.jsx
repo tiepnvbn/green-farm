@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { harvestProduct, getAllProducts, isTrustedFarmer } from "../store/blockchainStore";
+import { harvestProduct, getAllProducts, isTrustedFarmer, addTrustedFarmer } from "../store/blockchainStore";
 import { uploadToIPFS, uploadMetadataToIPFS, getIPFSUrl } from "../store/ipfsStore";
-import { connectWallet, isMetaMaskInstalled } from "../store/web3Provider";
+import { connectWallet, isMetaMaskInstalled, getContract } from "../store/web3Provider";
 
 export default function Farmer() {
   const [form, setForm] = useState({
@@ -20,15 +20,24 @@ export default function Farmer() {
   const [wallet, setWallet] = useState(null);
   const [products, setProducts] = useState([]);
   const [isFarmer, setIsFarmer] = useState(null);
+  const [isOwner, setIsOwner] = useState(false);
+  const [newFarmerAddr, setNewFarmerAddr] = useState("");
+  const [adminMsg, setAdminMsg] = useState("");
 
   useEffect(() => {
     if (isMetaMaskInstalled()) {
       connectWallet()
-        .then(({ address }) => {
+        .then(async ({ address }) => {
           setWallet(address);
-          return isTrustedFarmer(address);
+          const trusted = await isTrustedFarmer(address);
+          setIsFarmer(trusted);
+          // Check if connected wallet is contract owner
+          try {
+            const contract = await getContract();
+            const owner = await contract.owner();
+            setIsOwner(owner.toLowerCase() === address.toLowerCase());
+          } catch {}
         })
-        .then(setIsFarmer)
         .catch(() => {});
     }
   }, []);
@@ -47,8 +56,28 @@ export default function Farmer() {
       setWallet(address);
       const trusted = await isTrustedFarmer(address);
       setIsFarmer(trusted);
+      try {
+        const contract = await getContract();
+        const owner = await contract.owner();
+        setIsOwner(owner.toLowerCase() === address.toLowerCase());
+      } catch {}
     } catch (err) {
       setError(err.message);
+    }
+  };
+
+  const handleAddFarmer = async () => {
+    if (!newFarmerAddr) return;
+    setAdminMsg("");
+    try {
+      await addTrustedFarmer(newFarmerAddr);
+      setAdminMsg(`✅ Đã thêm ${newFarmerAddr} làm Trusted Farmer`);
+      setNewFarmerAddr("");
+      // Refresh own status
+      const trusted = await isTrustedFarmer(wallet);
+      setIsFarmer(trusted);
+    } catch (err) {
+      setAdminMsg(`❌ Lỗi: ${err.message}`);
     }
   };
 
@@ -128,6 +157,37 @@ export default function Farmer() {
       {!isMetaMaskInstalled() && (
         <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 p-4 rounded">
           ⚠️ MetaMask chưa được cài đặt. Vui lòng cài extension MetaMask để sử dụng.
+        </div>
+      )}
+
+      {isFarmer === false && wallet && (
+        <div className="bg-orange-50 border border-orange-200 text-orange-800 p-4 rounded">
+          ⚠️ Ví <strong className="font-mono text-xs break-all">{wallet}</strong> chưa được đăng ký Trusted Farmer. 
+          Liên hệ quản trị viên (contract owner) để được thêm vào danh sách.
+          <br/><span className="text-xs text-gray-500">Gửi địa chỉ ví trên cho admin để được cấp quyền.</span>
+        </div>
+      )}
+
+      {isOwner && (
+        <div className="bg-blue-50 border border-blue-200 p-4 rounded space-y-3">
+          <h3 className="font-semibold text-blue-800">🔐 Admin Panel - Quản lý Trusted Farmer</h3>
+          <p className="text-sm text-blue-700">Bạn là Contract Owner. Thêm địa chỉ ví vào danh sách Trusted Farmer để cho phép họ tạo lô hàng.</p>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newFarmerAddr}
+              onChange={(e) => setNewFarmerAddr(e.target.value)}
+              placeholder="0x... (địa chỉ ví farmer)"
+              className="flex-1 border rounded px-3 py-2 text-sm font-mono"
+            />
+            <button
+              onClick={handleAddFarmer}
+              className="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700"
+            >
+              ➕ Thêm Farmer
+            </button>
+          </div>
+          {adminMsg && <p className="text-sm">{adminMsg}</p>}
         </div>
       )}
 
