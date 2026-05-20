@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { harvestProduct, getAllProducts } from "../store/blockchainStore";
-import { uploadToIPFS, uploadMetadataToIPFS } from "../store/ipfsStore";
+import { useState, useEffect } from "react";
+import { harvestProduct, getAllProducts, isTrustedFarmer } from "../store/blockchainStore";
+import { uploadToIPFS, uploadMetadataToIPFS, getIPFSUrl } from "../store/ipfsStore";
+import { connectWallet, isMetaMaskInstalled } from "../store/web3Provider";
 
 export default function Farmer() {
   const [form, setForm] = useState({
@@ -13,21 +14,66 @@ export default function Farmer() {
   });
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const [certFile, setCertFile] = useState(null);
   const [productImage, setProductImage] = useState(null);
+  const [wallet, setWallet] = useState(null);
+  const [products, setProducts] = useState([]);
+  const [isFarmer, setIsFarmer] = useState(null);
 
-  const farmerAddress = "0xFarmer001"; // Simulated wallet
+  useEffect(() => {
+    if (isMetaMaskInstalled()) {
+      connectWallet()
+        .then(({ address }) => {
+          setWallet(address);
+          return isTrustedFarmer(address);
+        })
+        .then(setIsFarmer)
+        .catch(() => {});
+    }
+  }, []);
 
-  const handleSubmit = (e) => {
+  useEffect(() => {
+    if (wallet) {
+      getAllProducts().then((all) => {
+        setProducts(all.filter((p) => p.farmerAddress.toLowerCase() === wallet.toLowerCase()));
+      });
+    }
+  }, [wallet, result]);
+
+  const handleConnect = async () => {
+    try {
+      const { address } = await connectWallet();
+      setWallet(address);
+      const trusted = await isTrustedFarmer(address);
+      setIsFarmer(trusted);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setResult(null);
+    setLoading(true);
 
     try {
-      // Upload to IPFS
-      const certResult = uploadToIPFS(certFile || { name: "VietGAP_Certificate.pdf", size: 1024000 }, "certificate");
-      const imgResult = uploadToIPFS(productImage || { name: "product_batch.jpg", size: 2048000 }, "image");
-      const metaResult = uploadMetadataToIPFS({
+      let ipfsCertHash = "";
+      let ipfsImageHash = "";
+      let ipfsMetadataHash = "";
+
+      if (certFile) {
+        const certResult = await uploadToIPFS(certFile, "certificate");
+        ipfsCertHash = certResult.cid;
+      }
+
+      if (productImage) {
+        const imgResult = await uploadToIPFS(productImage, "image");
+        ipfsImageHash = imgResult.cid;
+      }
+
+      const metaResult = await uploadMetadataToIPFS({
         productName: form.productName,
         variety: form.variety,
         fertilizer: form.fertilizer,
@@ -35,37 +81,58 @@ export default function Farmer() {
         farmLocation: form.farmLocation,
         harvestDate: form.harvestDate,
       });
+      ipfsMetadataHash = metaResult.cid;
 
-      // Call smart contract
-      const txResult = harvestProduct({
-        farmerAddress,
-        ...form,
-        ipfsCertHash: certResult.cid,
-        ipfsImageHash: imgResult.cid,
-        ipfsMetadataHash: metaResult.cid,
+      // Triggers MetaMask popup
+      const txResult = await harvestProduct({
+        productName: form.productName,
+        farmLocation: form.farmLocation,
+        harvestDate: form.harvestDate,
+        ipfsCertHash,
+        ipfsImageHash,
+        ipfsMetadataHash,
       });
 
-      setResult({ ...txResult, ipfsCert: certResult.cid, ipfsImage: imgResult.cid, ipfsMeta: metaResult.cid });
+      setResult({ ...txResult, ipfsCert: ipfsCertHash, ipfsImage: ipfsImageHash, ipfsMeta: ipfsMetadataHash });
       setForm({ productName: "", farmLocation: "", harvestDate: "", variety: "", fertilizer: "", idealTemp: "" });
+      setCertFile(null);
+      setProductImage(null);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Transaction failed");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const products = getAllProducts().filter((p) => p.farmerAddress === farmerAddress);
-
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <h2 className="text-2xl font-bold text-green-800">🧑‍🌾 Farmer App</h2>
-        <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
-          Wallet: {farmerAddress}
-        </span>
+        {wallet ? (
+          <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded font-mono">
+            🔗 {wallet.slice(0, 6)}...{wallet.slice(-4)}
+          </span>
+        ) : (
+          <button onClick={handleConnect} className="text-xs bg-orange-500 text-white px-3 py-1 rounded hover:bg-orange-600">
+            🦊 Connect MetaMask
+          </button>
+        )}
+        {isFarmer === false && wallet && (
+          <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">⚠️ Not a Trusted Farmer</span>
+        )}
+        {isFarmer === true && (
+          <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">✅ Trusted Farmer</span>
+        )}
       </div>
 
-      {/* Form */}
+      {!isMetaMaskInstalled() && (
+        <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 p-4 rounded">
+          ⚠️ MetaMask chưa được cài đặt. Vui lòng cài extension MetaMask để sử dụng.
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-6 space-y-4">
-        <h3 className="font-semibold text-lg border-b pb-2">Đăng ký lô hàng mới (harvestProduct)</h3>
+        <h3 className="font-semibold text-lg border-b pb-2">Đăng ký lô hàng mới (harvestProduct → Mint NFT)</h3>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -94,9 +161,8 @@ export default function Farmer() {
           </div>
         </div>
 
-        {/* IPFS Upload */}
         <div className="border-t pt-4 space-y-3">
-          <h4 className="font-medium text-sm text-gray-600">📎 Upload lên IPFS</h4>
+          <h4 className="font-medium text-sm text-gray-600">📎 Upload lên IPFS (Pinata)</h4>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm text-gray-600 mb-1">Chứng chỉ VietGAP/GlobalGAP</label>
@@ -109,46 +175,45 @@ export default function Farmer() {
           </div>
         </div>
 
-        <button type="submit" className="bg-green-600 text-white px-6 py-2 rounded font-medium hover:bg-green-700 transition">
-          🌱 Tạo lô hàng (Mint to Blockchain)
+        <button
+          type="submit"
+          disabled={loading || !wallet || isFarmer === false}
+          className="bg-green-600 text-white px-6 py-2 rounded font-medium hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {loading ? "⏳ Đang xử lý (check MetaMask)..." : "🌱 Tạo lô hàng (Mint NFT to Blockchain)"}
         </button>
       </form>
 
-      {/* Result */}
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded">❌ {error}</div>
-      )}
+      {error && <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded">❌ {error}</div>}
+
       {result && (
         <div className="bg-green-50 border border-green-200 p-4 rounded space-y-2">
-          <p className="font-semibold text-green-800">✅ Lô hàng đã được ghi lên Blockchain!</p>
+          <p className="font-semibold text-green-800">✅ Lô hàng đã được ghi lên Blockchain (NFT Minted)!</p>
           <div className="text-sm space-y-1">
             <p><strong>Product ID:</strong> {result.productId}</p>
-            <p><strong>Tx Hash:</strong> <a href={`https://etherscan.io/tx/${result.txHash}`} target="_blank" rel="noreferrer" className="text-blue-600 underline break-all">{result.txHash}</a></p>
+            <p><strong>Token ID (NFT):</strong> #{result.tokenId}</p>
+            <p><strong>Tx Hash:</strong> <a href={result.etherscanUrl} target="_blank" rel="noreferrer" className="text-blue-600 underline break-all">{result.txHash}</a></p>
             <p><strong>Block:</strong> #{result.blockNumber}</p>
-            <p><strong>IPFS Cert:</strong> <a href={`https://ipfs.io/ipfs/${result.ipfsCert}`} target="_blank" rel="noreferrer" className="text-blue-600 underline">{result.ipfsCert}</a></p>
-            <p><strong>IPFS Image:</strong> <a href={`https://ipfs.io/ipfs/${result.ipfsImage}`} target="_blank" rel="noreferrer" className="text-blue-600 underline">{result.ipfsImage}</a></p>
+            {result.ipfsCert && <p><strong>IPFS Cert:</strong> <a href={getIPFSUrl(result.ipfsCert)} target="_blank" rel="noreferrer" className="text-blue-600 underline break-all">{result.ipfsCert}</a></p>}
+            {result.ipfsImage && <p><strong>IPFS Image:</strong> <a href={getIPFSUrl(result.ipfsImage)} target="_blank" rel="noreferrer" className="text-blue-600 underline break-all">{result.ipfsImage}</a></p>}
+            {result.ipfsMeta && <p><strong>IPFS Metadata:</strong> <a href={getIPFSUrl(result.ipfsMeta)} target="_blank" rel="noreferrer" className="text-blue-600 underline break-all">{result.ipfsMeta}</a></p>}
           </div>
         </div>
       )}
 
-      {/* Product List */}
       {products.length > 0 && (
         <div className="bg-white rounded-lg shadow p-6">
           <h3 className="font-semibold mb-3">📦 Lô hàng của bạn ({products.length})</h3>
           <div className="space-y-2">
             {products.map((p) => (
               <div key={p.id} className="flex justify-between items-center border rounded p-3 text-sm">
-                <div>
-                  <span className="font-medium">{p.id}</span> - {p.productName}
-                </div>
+                <div><span className="font-medium">{p.id}</span> - {p.productName}</div>
                 <span className={`px-2 py-1 rounded text-xs font-medium ${
                   p.status === 'Harvested' ? 'bg-yellow-100 text-yellow-700' :
                   p.status === 'In Transit' ? 'bg-blue-100 text-blue-700' :
                   p.status === 'Verified & On Sale' ? 'bg-green-100 text-green-700' :
                   'bg-gray-100 text-gray-700'
-                }`}>
-                  {p.status}
-                </span>
+                }`}>{p.status}</span>
               </div>
             ))}
           </div>

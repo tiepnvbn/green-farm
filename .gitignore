@@ -1,3 +1,6 @@
 node_modules
 dist
 .env
+cache
+src/artifacts
+package-lock.json

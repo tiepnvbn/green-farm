@@ -1,45 +1,92 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { receiveAndVerify, getAllProducts } from "../store/blockchainStore";
+import { connectWallet, isMetaMaskInstalled } from "../store/web3Provider";
+import { getIPFSUrl } from "../store/ipfsStore";
 
 export default function Retailer() {
   const [selectedId, setSelectedId] = useState("");
   const [notes, setNotes] = useState("");
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [wallet, setWallet] = useState(null);
+  const [products, setProducts] = useState([]);
 
-  const retailerAddress = "0xRetailer001";
-  const products = getAllProducts();
-  const pendingProducts = products.filter((p) => p.status === "In Transit");
-  const verifiedProducts = products.filter((p) => p.status === "Verified & On Sale");
+  useEffect(() => {
+    if (isMetaMaskInstalled()) {
+      connectWallet()
+        .then(({ address }) => setWallet(address))
+        .catch(() => {});
+    }
+  }, []);
 
-  const handleVerify = (verified) => {
-    setError("");
-    setResult(null);
+  useEffect(() => {
+    loadProducts();
+  }, [wallet, result]);
+
+  const loadProducts = async () => {
     try {
-      const txResult = receiveAndVerify({
-        productId: selectedId,
-        retailerAddress,
-        verified,
-        notes,
-      });
-      setResult({ ...txResult, verified });
-      setSelectedId("");
-      setNotes("");
+      const all = await getAllProducts();
+      setProducts(all);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleConnect = async () => {
+    try {
+      const { address } = await connectWallet();
+      setWallet(address);
     } catch (err) {
       setError(err.message);
     }
   };
 
-  const selectedProduct = products.find((p) => p.id === selectedId);
+  const pendingProducts = products.filter((p) => p.status === "In Transit");
+  const verifiedProducts = products.filter((p) => p.status === "Verified & On Sale");
+  const selectedProduct = products.find((p) => p.tokenId === parseInt(selectedId));
+
+  const handleVerify = async (verified) => {
+    setError("");
+    setResult(null);
+    setLoading(true);
+
+    try {
+      // Triggers MetaMask popup - if verified, NFT is transferred to retailer
+      const txResult = await receiveAndVerify({
+        tokenId: parseInt(selectedId),
+        verified,
+      });
+      setResult({ ...txResult, verified });
+      setSelectedId("");
+      setNotes("");
+    } catch (err) {
+      setError(err.message || "Transaction failed");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <h2 className="text-2xl font-bold text-purple-800">🏪 Retailer Page</h2>
-        <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
-          Retailer: {retailerAddress}
-        </span>
+        {wallet ? (
+          <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded font-mono">
+            🔗 {wallet.slice(0, 6)}...{wallet.slice(-4)}
+          </span>
+        ) : (
+          <button onClick={handleConnect} className="text-xs bg-orange-500 text-white px-3 py-1 rounded hover:bg-orange-600">
+            🦊 Connect MetaMask
+          </button>
+        )}
       </div>
+
+      {!isMetaMaskInstalled() && (
+        <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 p-4 rounded">
+          ⚠️ MetaMask chưa được cài đặt.
+        </div>
+      )}
 
       {/* Receive & Verify */}
       <div className="bg-white rounded-lg shadow p-6 space-y-4">
@@ -50,7 +97,7 @@ export default function Retailer() {
           <select value={selectedId} onChange={(e) => setSelectedId(e.target.value)} className="w-full border rounded px-3 py-2 text-sm">
             <option value="">-- Chọn lô hàng cần xác nhận --</option>
             {pendingProducts.map((p) => (
-              <option key={p.id} value={p.id}>{p.id} - {p.productName}</option>
+              <option key={p.tokenId} value={p.tokenId}>GF-{p.tokenId} - {p.productName}</option>
             ))}
           </select>
         </div>
@@ -64,7 +111,9 @@ export default function Retailer() {
             {selectedProduct.transitUpdates.length > 0 && (
               <p><strong>Nhiệt độ cuối:</strong> {selectedProduct.transitUpdates[selectedProduct.transitUpdates.length - 1].temperature}°C</p>
             )}
-            <p><strong>IPFS Cert:</strong> <a href={`https://ipfs.io/ipfs/${selectedProduct.ipfsCertHash}`} target="_blank" rel="noreferrer" className="text-blue-600 underline text-xs">{selectedProduct.ipfsCertHash}</a></p>
+            {selectedProduct.ipfsCertHash && (
+              <p><strong>IPFS Cert:</strong> <a href={getIPFSUrl(selectedProduct.ipfsCertHash)} target="_blank" rel="noreferrer" className="text-blue-600 underline text-xs">{selectedProduct.ipfsCertHash}</a></p>
+            )}
           </div>
         )}
 
@@ -74,20 +123,29 @@ export default function Retailer() {
         </div>
 
         <div className="flex gap-3">
-          <button onClick={() => handleVerify(true)} disabled={!selectedId} className="bg-green-600 text-white px-5 py-2 rounded font-medium hover:bg-green-700 disabled:opacity-50 transition">
-            ✅ Xác nhận & Bày bán
+          <button
+            onClick={() => handleVerify(true)}
+            disabled={!selectedId || loading || !wallet}
+            className="bg-green-600 text-white px-5 py-2 rounded font-medium hover:bg-green-700 disabled:opacity-50 transition"
+          >
+            {loading ? "⏳..." : "✅ Xác nhận & Nhận NFT"}
           </button>
-          <button onClick={() => handleVerify(false)} disabled={!selectedId} className="bg-red-500 text-white px-5 py-2 rounded font-medium hover:bg-red-600 disabled:opacity-50 transition">
+          <button
+            onClick={() => handleVerify(false)}
+            disabled={!selectedId || loading || !wallet}
+            className="bg-red-500 text-white px-5 py-2 rounded font-medium hover:bg-red-600 disabled:opacity-50 transition"
+          >
             ❌ Từ chối
           </button>
         </div>
       </div>
 
       {error && <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded">❌ {error}</div>}
+
       {result && (
         <div className={`p-4 rounded border text-sm ${result.verified ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-          <p className="font-semibold">{result.verified ? '✅ Đã xác nhận nhận hàng!' : '❌ Đã từ chối lô hàng'}</p>
-          <p><strong>Tx Hash:</strong> <a href={`https://etherscan.io/tx/${result.txHash}`} target="_blank" rel="noreferrer" className="text-blue-600 underline break-all">{result.txHash}</a></p>
+          <p className="font-semibold">{result.verified ? '✅ Đã xác nhận! NFT đã được transfer cho bạn.' : '❌ Đã từ chối lô hàng'}</p>
+          <p><strong>Tx Hash:</strong> <a href={result.etherscanUrl} target="_blank" rel="noreferrer" className="text-blue-600 underline break-all">{result.txHash}</a></p>
           <p><strong>Block:</strong> #{result.blockNumber}</p>
         </div>
       )}
@@ -98,9 +156,9 @@ export default function Retailer() {
           <h3 className="font-semibold mb-3">🛒 Đang bày bán ({verifiedProducts.length})</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {verifiedProducts.map((p) => (
-              <div key={p.id} className="border rounded p-3 text-sm">
+              <div key={p.tokenId} className="border rounded p-3 text-sm">
                 <p className="font-medium">{p.productName}</p>
-                <p className="text-gray-500">ID: {p.id} | Từ: {p.farmLocation}</p>
+                <p className="text-gray-500">ID: GF-{p.tokenId} | Từ: {p.farmLocation}</p>
               </div>
             ))}
           </div>

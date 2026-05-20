@@ -1,202 +1,236 @@
-// Simulated blockchain store - in real app this would interact with smart contract via ethers.js
-// This simulates the FoodTraceability smart contract
+// Blockchain Store - Real Web3 interaction with deployed Smart Contract
+import { getContract, getReadOnlyContract, getEtherscanUrl } from "./web3Provider";
 
-const products = new Map();
-let productCounter = 1000;
+const STATUS_MAP = ["Harvested", "In Transit", "Verified & On Sale", "Rejected", "Sold"];
 
-// Simulated trusted farmers
-const trustedFarmers = ['0xFarmer001', '0xFarmer002', '0xFarmer003'];
+/**
+ * Parse product data from contract to frontend format
+ */
+function parseProduct(tokenId, productData, transitData) {
+  const timeline = [];
 
-function generateTxHash() {
-  const chars = '0123456789abcdef';
-  let hash = '0x';
-  for (let i = 0; i < 64; i++) hash += chars[Math.floor(Math.random() * 16)];
-  return hash;
-}
+  // Add harvest event
+  timeline.push({
+    action: "Harvested",
+    actor: productData.farmer,
+    timestamp: new Date(Number(productData.createdAt) * 1000).toISOString(),
+    details: `Product harvested at ${productData.farmLocation}`,
+  });
 
-function generateBlockNumber() {
-  return Math.floor(18000000 + Math.random() * 1000000);
-}
-
-// harvestProduct() - Farmer creates new batch
-export function harvestProduct({ farmerAddress, productName, farmLocation, harvestDate, variety, fertilizer, idealTemp, ipfsCertHash, ipfsImageHash, ipfsMetadataHash }) {
-  if (!trustedFarmers.includes(farmerAddress)) {
-    throw new Error('Access Denied: Address not in Trusted Farmers list');
+  // Add transit events
+  const transitUpdates = [];
+  if (transitData && transitData.length > 0) {
+    for (const t of transitData) {
+      const update = {
+        location: t.location,
+        temperature: t.temperature,
+        humidity: t.humidity,
+        notes: t.notes,
+        carrierAddress: t.carrier,
+        timestamp: new Date(Number(t.timestamp) * 1000).toISOString(),
+      };
+      transitUpdates.push(update);
+      timeline.push({
+        action: "Transit Update",
+        actor: t.carrier,
+        timestamp: update.timestamp,
+        details: `Location: ${t.location} | Temp: ${t.temperature}°C`,
+      });
+    }
   }
 
-  const productId = `GF-${++productCounter}`;
-  const txHash = generateTxHash();
-  const blockNumber = generateBlockNumber();
+  // Add verify event if applicable
+  if (Number(productData.status) >= 2 && productData.retailer !== "0x0000000000000000000000000000000000000000") {
+    timeline.push({
+      action: Number(productData.status) === 3 ? "Received & Rejected" : "Received & Verified",
+      actor: productData.retailer,
+      timestamp: new Date().toISOString(),
+      details: Number(productData.status) === 3 ? "Product rejected" : "Product verified and ready for sale",
+    });
+  }
 
-  const product = {
-    id: productId,
+  return {
+    id: `GF-${tokenId}`,
+    tokenId: Number(tokenId),
+    productName: productData.productName,
+    farmLocation: productData.farmLocation,
+    harvestDate: productData.harvestDate,
+    ipfsCertHash: productData.ipfsCertHash,
+    ipfsImageHash: productData.ipfsImageHash,
+    ipfsMetadataHash: productData.ipfsMetadataHash,
+    farmerAddress: productData.farmer,
+    retailerAddress: productData.retailer,
+    status: STATUS_MAP[Number(productData.status)] || "Unknown",
+    createdAt: new Date(Number(productData.createdAt) * 1000).toISOString(),
+    timeline,
+    transitUpdates,
+  };
+}
+
+/**
+ * harvestProduct - Farmer mints new product NFT
+ * Triggers MetaMask popup for signing
+ */
+export async function harvestProduct({ productName, farmLocation, harvestDate, ipfsCertHash, ipfsImageHash, ipfsMetadataHash }) {
+  const contract = await getContract();
+
+  const tx = await contract.harvestProduct(
     productName,
     farmLocation,
     harvestDate,
-    variety,
-    fertilizer,
-    idealTemp,
-    farmerAddress,
-    status: 'Harvested',
-    ipfsCertHash,
-    ipfsImageHash,
-    ipfsMetadataHash,
-    timeline: [
-      {
-        action: 'Harvested',
-        actor: farmerAddress,
-        timestamp: new Date().toISOString(),
-        txHash,
-        blockNumber,
-        details: `Product harvested at ${farmLocation}`,
-      }
-    ],
-    transitUpdates: [],
-    createdAt: new Date().toISOString(),
-  };
+    ipfsCertHash || "",
+    ipfsImageHash || "",
+    ipfsMetadataHash || ""
+  );
 
-  products.set(productId, product);
-  return { productId, txHash, blockNumber };
+  // Wait for transaction to be mined
+  const receipt = await tx.wait();
+  const tokenId = await contract.getTokenCounter();
+
+  return {
+    productId: `GF-${tokenId}`,
+    tokenId: Number(tokenId),
+    txHash: receipt.hash,
+    blockNumber: receipt.blockNumber,
+    etherscanUrl: getEtherscanUrl(receipt.hash),
+  };
 }
 
-// updateTransitStatus() - Logistics updates location & conditions
-export function updateTransitStatus({ productId, carrierAddress, location, temperature, humidity, notes }) {
-  const product = products.get(productId);
-  if (!product) throw new Error('Product not found');
-  if (product.status === 'Sold') throw new Error('Cannot update: Product already marked as Sold');
+/**
+ * updateTransitStatus - Logistics updates location
+ * Triggers MetaMask popup
+ */
+export async function updateTransitStatus({ tokenId, location, temperature, humidity, notes }) {
+  const contract = await getContract();
 
-  const txHash = generateTxHash();
-  const blockNumber = generateBlockNumber();
-
-  product.status = 'In Transit';
-  const update = {
+  const tx = await contract.updateTransitStatus(
+    tokenId,
     location,
-    temperature,
-    humidity,
-    notes,
-    carrierAddress,
-    timestamp: new Date().toISOString(),
-    txHash,
-    blockNumber,
+    temperature || "N/A",
+    humidity || "N/A",
+    notes || ""
+  );
+
+  const receipt = await tx.wait();
+  return {
+    txHash: receipt.hash,
+    blockNumber: receipt.blockNumber,
+    etherscanUrl: getEtherscanUrl(receipt.hash),
   };
-  product.transitUpdates.push(update);
-  product.timeline.push({
-    action: 'Transit Update',
-    actor: carrierAddress,
-    timestamp: update.timestamp,
-    txHash,
-    blockNumber,
-    details: `Location: ${location} | Temp: ${temperature}°C`,
-  });
-
-  products.set(productId, product);
-  return { txHash, blockNumber };
 }
 
-// receiveAndVerify() - Retailer confirms receipt
-export function receiveAndVerify({ productId, retailerAddress, verified, notes }) {
-  const product = products.get(productId);
-  if (!product) throw new Error('Product not found');
-  if (product.status === 'Sold') throw new Error('Product already sold');
+/**
+ * receiveAndVerify - Retailer verifies product
+ * If verified, NFT is transferred to retailer
+ * Triggers MetaMask popup
+ */
+export async function receiveAndVerify({ tokenId, verified }) {
+  const contract = await getContract();
 
-  const txHash = generateTxHash();
-  const blockNumber = generateBlockNumber();
+  const tx = await contract.receiveAndVerify(tokenId, verified);
+  const receipt = await tx.wait();
 
-  product.status = verified ? 'Verified & On Sale' : 'Rejected';
-  product.retailerAddress = retailerAddress;
-  product.timeline.push({
-    action: verified ? 'Received & Verified' : 'Received & Rejected',
-    actor: retailerAddress,
-    timestamp: new Date().toISOString(),
-    txHash,
-    blockNumber,
-    details: notes || (verified ? 'Product verified and ready for sale' : 'Product rejected'),
-  });
-
-  products.set(productId, product);
-  return { txHash, blockNumber };
+  return {
+    txHash: receipt.hash,
+    blockNumber: receipt.blockNumber,
+    verified,
+    etherscanUrl: getEtherscanUrl(receipt.hash),
+  };
 }
 
-// Mark as sold
-export function markAsSold({ productId }) {
-  const product = products.get(productId);
-  if (!product) throw new Error('Product not found');
-  product.status = 'Sold';
-  const txHash = generateTxHash();
-  product.timeline.push({
-    action: 'Sold',
-    actor: 'Consumer',
-    timestamp: new Date().toISOString(),
-    txHash,
-    blockNumber: generateBlockNumber(),
-    details: 'Product purchased by consumer',
-  });
-  products.set(productId, product);
-  return { txHash };
+/**
+ * markAsSold - Owner marks product as sold
+ */
+export async function markAsSold({ tokenId }) {
+  const contract = await getContract();
+  const tx = await contract.markAsSold(tokenId);
+  const receipt = await tx.wait();
+  return {
+    txHash: tx.hash,
+    etherscanUrl: getEtherscanUrl(receipt.hash),
+  };
 }
 
-// Query product
-export function getProduct(productId) {
-  return products.get(productId) || null;
+/**
+ * getProduct - Read product data from blockchain
+ */
+export async function getProduct(tokenId) {
+  try {
+    const contract = await getReadOnlyContract();
+    const numericId = typeof tokenId === "string" ? parseInt(tokenId.replace("GF-", "")) : tokenId;
+    const productData = await contract.getProduct(numericId);
+    if (!productData.farmer || productData.farmer === "0x0000000000000000000000000000000000000000") {
+      return null;
+    }
+    const transitData = await contract.getTransitHistory(numericId);
+    return parseProduct(numericId, productData, transitData);
+  } catch (e) {
+    console.error("getProduct error:", e);
+    return null;
+  }
 }
 
-// Get all products
-export function getAllProducts() {
-  return Array.from(products.values());
+/**
+ * getAllProducts - Fetch all products from blockchain
+ */
+export async function getAllProducts() {
+  try {
+    const contract = await getReadOnlyContract();
+    const counter = await contract.getTokenCounter();
+    const total = Number(counter);
+    const products = [];
+
+    for (let id = 1001; id <= total; id++) {
+      try {
+        const productData = await contract.getProduct(id);
+        if (productData.farmer && productData.farmer !== "0x0000000000000000000000000000000000000000") {
+          const transitData = await contract.getTransitHistory(id);
+          products.push(parseProduct(id, productData, transitData));
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+    return products;
+  } catch (e) {
+    console.error("getAllProducts error:", e);
+    return [];
+  }
 }
 
-// Search products by keyword (contains, case-insensitive)
-export function searchProducts(keyword) {
+/**
+ * searchProducts - Search products by keyword
+ */
+export async function searchProducts(keyword) {
   if (!keyword) return [];
   const kw = keyword.trim().toLowerCase();
-  return Array.from(products.values()).filter((p) =>
-    p.id.toLowerCase().includes(kw) ||
-    p.productName.toLowerCase().includes(kw) ||
-    p.farmLocation.toLowerCase().includes(kw)
+  const all = await getAllProducts();
+  return all.filter(
+    (p) =>
+      p.id.toLowerCase().includes(kw) ||
+      p.productName.toLowerCase().includes(kw) ||
+      p.farmLocation.toLowerCase().includes(kw)
   );
 }
 
-// Seed demo data
-export function seedDemoData() {
-  if (products.size > 0) return;
+/**
+ * Check if address is trusted farmer
+ */
+export async function isTrustedFarmer(address) {
+  try {
+    const contract = await getReadOnlyContract();
+    return await contract.isTrustedFarmer(address);
+  } catch (e) {
+    return false;
+  }
+}
 
-  harvestProduct({
-    farmerAddress: '0xFarmer001',
-    productName: 'Xoài Cát Hòa Lộc',
-    farmLocation: 'Tiền Giang, Việt Nam',
-    harvestDate: '2026-05-10',
-    variety: 'Cát Hòa Lộc',
-    fertilizer: 'Phân hữu cơ vi sinh',
-    idealTemp: '13',
-    ipfsCertHash: 'QmXoaiCert123abc456def789ghi012jkl345mno678pqr',
-    ipfsImageHash: 'QmXoaiImg123abc456def789ghi012jkl345mno678pqr',
-    ipfsMetadataHash: 'QmXoaiMeta123abc456def789ghi012jkl345mno678pq',
-  });
-
-  const firstId = Array.from(products.keys())[0];
-
-  updateTransitStatus({
-    productId: firstId,
-    carrierAddress: '0xLogistics001',
-    location: 'Kho lạnh Bình Dương',
-    temperature: '14',
-    humidity: '85',
-    notes: 'Đóng gói xong, bắt đầu vận chuyển',
-  });
-
-  updateTransitStatus({
-    productId: firstId,
-    carrierAddress: '0xLogistics001',
-    location: 'Trung tâm phân phối TP.HCM',
-    temperature: '13',
-    humidity: '82',
-    notes: 'Đã đến trung tâm phân phối',
-  });
-
-  receiveAndVerify({
-    productId: firstId,
-    retailerAddress: '0xRetailer001',
-    verified: true,
-    notes: 'Hàng đạt chuẩn, nhiệt độ ổn định',
-  });
+/**
+ * Add trusted farmer (only contract owner)
+ */
+export async function addTrustedFarmer(farmerAddress) {
+  const contract = await getContract();
+  const tx = await contract.addTrustedFarmer(farmerAddress);
+  await tx.wait();
+  return { txHash: tx.hash };
 }
