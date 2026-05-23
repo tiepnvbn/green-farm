@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { receiveAndVerify, getAllProducts } from "../store/blockchainStore";
+import { receiveAndVerify, markAsSold, getAllProducts } from "../store/blockchainStore";
 import { connectWallet, isMetaMaskInstalled } from "../store/web3Provider";
 import { getIPFSUrl } from "../store/ipfsStore";
 
@@ -44,7 +44,22 @@ export default function Retailer() {
 
   const pendingProducts = products.filter((p) => p.status === "In Transit");
   const verifiedProducts = products.filter((p) => p.status === "Verified & On Sale");
+  const soldProducts = products.filter((p) => p.status === "Sold");
   const selectedProduct = products.find((p) => p.tokenId === parseInt(selectedId));
+
+  const handleMarkAsSold = async (tokenId) => {
+    setError("");
+    setResult(null);
+    setLoading(true);
+    try {
+      const txResult = await markAsSold({ tokenId });
+      setResult({ ...txResult, sold: true, tokenId });
+    } catch (err) {
+      setError(err.message || "Transaction failed");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleVerify = async (verified) => {
     setError("");
@@ -143,8 +158,10 @@ export default function Retailer() {
       {error && <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded">❌ {error}</div>}
 
       {result && (
-        <div className={`p-4 rounded border text-sm ${result.verified ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-          <p className="font-semibold">{result.verified ? '✅ Đã xác nhận! NFT đã được transfer cho bạn.' : '❌ Đã từ chối lô hàng'}</p>
+        <div className={`p-4 rounded border text-sm ${result.verified ? 'bg-green-50 border-green-200' : result.sold ? 'bg-blue-50 border-blue-200' : 'bg-red-50 border-red-200'}`}>
+          <p className="font-semibold">
+            {result.sold ? '🔒 Đã đánh dấu BÁN! Lô hàng không thể cập nhật thêm.' : result.verified ? '✅ Đã xác nhận! NFT đã được transfer cho bạn.' : '❌ Đã từ chối lô hàng'}
+          </p>
           <p><strong>Tx Hash:</strong> <a href={result.etherscanUrl} target="_blank" rel="noreferrer" className="text-blue-600 underline break-all">{result.txHash}</a></p>
           <p><strong>Block:</strong> #{result.blockNumber}</p>
         </div>
@@ -156,9 +173,35 @@ export default function Retailer() {
           <h3 className="font-semibold mb-3">🛒 Đang bày bán ({verifiedProducts.length})</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {verifiedProducts.map((p) => (
-              <div key={p.tokenId} className="border rounded p-3 text-sm">
-                <p className="font-medium">{p.productName}</p>
-                <p className="text-gray-500">ID: GF-{p.tokenId} | Từ: {p.farmLocation}</p>
+              <div key={p.tokenId} className="border rounded p-3 text-sm flex justify-between items-center">
+                <div>
+                  <p className="font-medium">{p.productName}</p>
+                  <p className="text-gray-500">ID: GF-{p.tokenId} | Từ: {p.farmLocation}</p>
+                </div>
+                <button
+                  onClick={() => handleMarkAsSold(p.tokenId)}
+                  disabled={loading || !wallet}
+                  className="bg-blue-600 text-white px-3 py-1.5 rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-50 transition whitespace-nowrap"
+                >
+                  💰 Đánh dấu đã bán
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Sold products - locked */}
+      {soldProducts.length > 0 && (
+        <div className="bg-gray-50 rounded-lg shadow p-6 border border-gray-200">
+          <h3 className="font-semibold mb-1 text-gray-600">🔒 Đã bán ({soldProducts.length})</h3>
+          <p className="text-xs text-gray-500 mb-3">Các lô hàng đã bán không thể cập nhật thêm bất kỳ thông tin nào.</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {soldProducts.map((p) => (
+              <div key={p.tokenId} className="border border-gray-300 bg-gray-100 rounded p-3 text-sm opacity-75">
+                <p className="font-medium text-gray-600">{p.productName}</p>
+                <p className="text-gray-400">ID: GF-{p.tokenId} | Từ: {p.farmLocation}</p>
+                <span className="inline-block mt-1 text-xs bg-gray-300 text-gray-600 px-2 py-0.5 rounded">🔒 Đã khóa</span>
               </div>
             ))}
           </div>

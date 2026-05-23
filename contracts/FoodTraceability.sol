@@ -170,8 +170,9 @@ contract FoodTraceability is ERC721, Ownable {
 
     /**
      * @dev Mark product as sold (by retailer/current owner)
+     * Once sold, no further updates are allowed
      */
-    function markAsSold(uint256 tokenId) external productExists(tokenId) {
+    function markAsSold(uint256 tokenId) external productExists(tokenId) notSold(tokenId) {
         require(ownerOf(tokenId) == msg.sender, "Only current owner can mark as sold");
         products[tokenId].status = Status.Sold;
         emit ProductSold(tokenId);
